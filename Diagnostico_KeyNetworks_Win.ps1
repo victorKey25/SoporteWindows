@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-KeyNetworks Diagnostic Tool - Reporte HTML Inteligente
+KeyNetworks Diagnostic Tool (Mac Style + AI)
 
 .VERSION
-2.0
+2.1
 
 .AUTHOR
 Victor Keymolen - KeyNetworks
@@ -13,68 +13,94 @@ param (
     [string]$ReportPath = "$env:USERPROFILE\Desktop\WindowsDiagnostic"
 )
 
-$VERSION = "2.0"
+$VERSION = "2.1"
 $HTML_REPORT = "$ReportPath\report_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
 New-Item -ItemType Directory -Path $ReportPath -Force | Out-Null
 
 # ==========================
-# FUNCIONES
+# UI (ESTILO MAC)
 # ==========================
-function Format-Size {
-    param([int64]$bytes)
-    if ($bytes -ge 1TB) { "{0:N1} TB" -f ($bytes / 1TB) }
-    elseif ($bytes -ge 1GB) { "{0:N1} GB" -f ($bytes / 1GB) }
-    elseif ($bytes -ge 1MB) { "{0:N1} MB" -f ($bytes / 1MB) }
-    elseif ($bytes -ge 1KB) { "{0:N1} KB" -f ($bytes / 1KB) }
-    else { "$bytes B" }
+function Show-Section($title) {
+    Write-Host "`n=====================================" -ForegroundColor DarkGray
+    Write-Host "🔹 $title" -ForegroundColor Cyan
+    Write-Host "=====================================" -ForegroundColor DarkGray
 }
 
+function OK($msg) { Write-Host "✅ $msg" -ForegroundColor Green }
+function WARN($msg) { Write-Host "⚠️ $msg" -ForegroundColor Yellow }
+function BAD($msg) { Write-Host "❌ $msg" -ForegroundColor Red }
+
 # ==========================
-# DATOS DEL SISTEMA
+# DATOS
 # ==========================
+Show-Section "INICIANDO DIAGNÓSTICO KEYNETWORKS"
+
 $os = Get-CimInstance Win32_OperatingSystem
 $computer = Get-CimInstance Win32_ComputerSystem
 $cpu = Get-CimInstance Win32_Processor
-$uptime = (Get-Date) - $os.LastBootUpTime
+
+# CPU
+Show-Section "CPU"
+$cpuLoad = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples.CookedValue
+Write-Host "Modelo: $($cpu.Name)"
+Write-Host "Uso actual: $([int]$cpuLoad)%"
 
 # RAM
+Show-Section "MEMORIA RAM"
 $memory = Get-CimInstance Win32_PhysicalMemory | Measure-Object Capacity -Sum | Select-Object -ExpandProperty Sum
-$osInfo = Get-CimInstance Win32_OperatingSystem
-$freeMemoryBytes = $osInfo.FreePhysicalMemory * 1KB
-$usedRAMPercent = (($memory - $freeMemoryBytes) / $memory) * 100
+$freeMemory = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory * 1KB
+$usedRAMPercent = (($memory - $freeMemory) / $memory) * 100
 
-# Disco
+Write-Host "Total: $([math]::Round($memory / 1GB,2)) GB"
+Write-Host "Uso: $([int]$usedRAMPercent)%"
+
+# DISCO
+Show-Section "ALMACENAMIENTO"
 $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
 $diskUsagePercent = (($disk.Size - $disk.FreeSpace) / $disk.Size) * 100
 $diskType = (Get-PhysicalDisk | Select-Object -First 1).MediaType
 
-# CPU uso
-$cpuLoad = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples.CookedValue
+Write-Host "Tipo: $diskType"
+Write-Host "Uso: $([int]$diskUsagePercent)%"
+
+# PROCESOS
+Show-Section "PROCESOS PESADOS"
+Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 Name, CPU
 
 # ==========================
 # ANÁLISIS INTELIGENTE
 # ==========================
+Show-Section "ANÁLISIS INTELIGENTE"
+
 $issues = @()
 $recommendations = @()
 
 if ($usedRAMPercent -gt 80) {
-    $issues += "RAM alta ($([int]$usedRAMPercent)%)"
-    $recommendations += "Ampliar RAM a 16GB o más"
-}
-
-if ($diskUsagePercent -gt 85) {
-    $issues += "Disco casi lleno ($([int]$diskUsagePercent)%)"
-    $recommendations += "Liberar espacio o ampliar almacenamiento"
+    BAD "RAM saturada ($([int]$usedRAMPercent)%)"
+    $issues += "RAM alta"
+    $recommendations += "Ampliar a 16GB o más"
+} else {
+    OK "RAM en buen estado"
 }
 
 if ($diskType -eq "HDD") {
-    $issues += "Disco HDD detectado"
-    $recommendations += "Cambiar a SSD (MEJORA CRÍTICA)"
+    BAD "Disco HDD detectado"
+    $issues += "Disco HDD"
+    $recommendations += "Cambiar a SSD (CRÍTICO)"
+} else {
+    OK "Disco SSD detectado"
+}
+
+if ($diskUsagePercent -gt 85) {
+    WARN "Disco casi lleno"
+    $issues += "Disco lleno"
+    $recommendations += "Liberar espacio"
 }
 
 if ($cpuLoad -gt 80) {
-    $issues += "CPU alta ($([int]$cpuLoad)%)"
-    $recommendations += "Revisar procesos en segundo plano"
+    WARN "CPU alta ($([int]$cpuLoad)%)"
+    $issues += "CPU alta"
+    $recommendations += "Revisar procesos"
 }
 
 # SCORE
@@ -83,77 +109,41 @@ if ($usedRAMPercent -gt 80) { $score -= 20 }
 if ($diskUsagePercent -gt 85) { $score -= 20 }
 if ($cpuLoad -gt 80) { $score -= 20 }
 if ($diskType -eq "HDD") { $score -= 30 }
+
 if ($score -lt 0) { $score = 0 }
 
+Show-Section "RESULTADO FINAL"
+
+Write-Host "📊 SCORE: $score / 100" -ForegroundColor Cyan
+
+if ($score -gt 80) { OK "Equipo en buen estado" }
+elseif ($score -gt 60) { WARN "Equipo mejorable" }
+else { BAD "Equipo requiere optimización" }
+
 # ==========================
-# HTML
+# HTML REPORT
 # ==========================
 @"
-<!DOCTYPE html>
 <html>
-<head>
-<title>Diagnóstico - $($env:COMPUTERNAME)</title>
-<style>
-body { font-family: Arial; margin:20px; }
-.card { background:#f4f4f4; padding:15px; border-radius:8px; margin-bottom:20px; }
-.header { background:#111; color:white; padding:15px; border-radius:8px; text-align:center; }
-.critical { color:red; }
-.warning { color:orange; }
-</style>
-</head>
-<body>
-
-<div class="header">
-<strong>KeyNetworks</strong><br>
-soporte@keynetworks.mx
-</div>
-
-<h1>Diagnóstico - $($env:COMPUTERNAME)</h1>
-<p>Fecha: $(Get-Date) | Versión: $VERSION</p>
-
-<div class="card">
-<h2>📊 Evaluación General</h2>
-<h3>Score: $score / 100</h3>
+<body style='font-family:Arial'>
+<h1>KeyNetworks Diagnostic</h1>
+<h2>Score: $score / 100</h2>
 
 <h3>Problemas:</h3>
 <ul>
-$($issues | ForEach-Object { "<li class='critical'>$_</li>" })
+$($issues | ForEach-Object { "<li>$_</li>" })
 </ul>
 
 <h3>Recomendaciones:</h3>
 <ul>
-$($recommendations | ForEach-Object { "<li class='warning'>$_</li>" })
+$($recommendations | ForEach-Object { "<li>$_</li>" })
 </ul>
-</div>
 
-<div class="card">
-<h2>Sistema</h2>
-<p>$($computer.Manufacturer) - $($computer.Model)</p>
-<p>$($os.Caption)</p>
-<p>CPU: $($cpu.Name)</p>
-</div>
-
-<div class="card">
-<h2>RAM</h2>
-<p>Total: $([math]::Round($memory / 1GB,2)) GB</p>
-<p>Uso: $([int]$usedRAMPercent)%</p>
-</div>
-
-<div class="card">
-<h2>Disco</h2>
-<p>Tipo: $diskType</p>
-<p>Uso: $([int]$diskUsagePercent)%</p>
-</div>
-
-<div class="card">
-<h2>🛠 Soporte</h2>
-<p>¿Quieres optimizar tu equipo?</p>
-<p>Contáctanos: soporte@keynetworks.mx</p>
-</div>
+<p>Contacto: soporte@keynetworks.mx</p>
 
 </body>
 </html>
-"@ | Out-File $HTML_REPORT -Encoding UTF8
+"@ | Out-File $HTML_REPORT
 
-Write-Host "✅ Reporte generado: $HTML_REPORT" -ForegroundColor Green
+Write-Host "`n📄 Reporte generado: $HTML_REPORT" -ForegroundColor Green
 Invoke-Item $HTML_REPORT
