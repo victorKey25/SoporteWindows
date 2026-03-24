@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-KeyNetworks Diagnostic Tool - FULL (Auditoría + Inteligencia)
+KeyNetworks Diagnostic Tool - FULL UX + AI
 
 .VERSION
-3.0
+3.5
 
 .AUTHOR
 Victor Keymolen - KeyNetworks
@@ -13,7 +13,7 @@ param (
     [string]$ReportPath = "$env:USERPROFILE\Desktop\WindowsDiagnostic"
 )
 
-$VERSION = "3.0"
+$VERSION = "3.5"
 $HTML_REPORT = "$ReportPath\report_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
 New-Item -ItemType Directory -Path $ReportPath -Force | Out-Null
 
@@ -21,109 +21,74 @@ New-Item -ItemType Directory -Path $ReportPath -Force | Out-Null
 # UI (ESTILO MAC)
 # ==========================
 function Show-Section($title) {
-    Write-Host "`n=====================================" -ForegroundColor DarkGray
+    Write-Host "`n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
     Write-Host "🔹 $title" -ForegroundColor Cyan
-    Write-Host "=====================================" -ForegroundColor DarkGray
+    Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
 }
 
 function OK($msg) { Write-Host "✅ $msg" -ForegroundColor Green }
 function WARN($msg) { Write-Host "⚠️ $msg" -ForegroundColor Yellow }
 function BAD($msg) { Write-Host "❌ $msg" -ForegroundColor Red }
 
-function Format-Size {
-    param([int64]$bytes)
-    if ($bytes -ge 1TB) { "{0:N1} TB" -f ($bytes / 1TB) }
-    elseif ($bytes -ge 1GB) { "{0:N1} GB" -f ($bytes / 1GB) }
-    elseif ($bytes -ge 1MB) { "{0:N1} MB" -f ($bytes / 1MB) }
-    elseif ($bytes -ge 1KB) { "{0:N1} KB" -f ($bytes / 1KB) }
-    else { "$bytes B" }
-}
-
 # ==========================
-# DATOS DEL SISTEMA
+# DATOS BASE
 # ==========================
-Show-Section "INICIANDO DIAGNÓSTICO KEYNETWORKS"
-
 $os = Get-CimInstance Win32_OperatingSystem
 $computer = Get-CimInstance Win32_ComputerSystem
 $cpu = Get-CimInstance Win32_Processor
 
-# CPU
-Show-Section "CPU"
-$cpuLoad = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples.CookedValue
-Write-Host "Modelo: $($cpu.Name)"
-Write-Host "Uso: $([int]$cpuLoad)%"
-
-# RAM
-Show-Section "MEMORIA"
 $memory = Get-CimInstance Win32_PhysicalMemory | Measure-Object Capacity -Sum | Select -Expand Sum
 $freeMemory = $os.FreePhysicalMemory * 1KB
 $usedRAMPercent = (($memory - $freeMemory) / $memory) * 100
 
-Write-Host "Total: $([math]::Round($memory / 1GB,2)) GB"
-Write-Host "Uso: $([int]$usedRAMPercent)%"
-
-# DISCO
-Show-Section "DISCO"
 $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
 $diskUsagePercent = (($disk.Size - $disk.FreeSpace) / $disk.Size) * 100
 $diskType = (Get-PhysicalDisk | Select -First 1).MediaType
 
-Write-Host "Tipo: $diskType"
-Write-Host "Uso: $([int]$diskUsagePercent)%"
+$cpuLoad = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples.CookedValue
 
-# ==========================
-# USUARIOS
-# ==========================
-Show-Section "USUARIOS"
+# Usuarios
+$users = Get-CimInstance Win32_UserProfile | Where-Object { $_.Special -eq $false }
 
-$users = Get-CimInstance Win32_UserProfile | Where { $_.Special -eq $false }
-
-foreach ($u in $users) {
-    $name = $u.LocalPath.Split("\")[-1]
-    $last = if ($u.LastUseTime) { ([datetime]$u.LastUseTime).ToString("yyyy-MM-dd") } else { "N/A" }
-    Write-Host "$name - Último uso: $last"
+# Chrome
+$chromePath = "$env:LOCALAPPDATA\Google\Chrome\User Data"
+$chromeProfiles = @()
+if (Test-Path $chromePath) {
+    $chromeProfiles = Get-ChildItem $chromePath -Directory | Where-Object { $_.Name -like "Profile*" -or $_.Name -eq "Default" }
 }
 
-# ==========================
-# BLUETOOTH
-# ==========================
-Show-Section "BLUETOOTH"
-
-$bluetooth = Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | Where Status -eq "OK"
-$bluetooth | Select FriendlyName, Status
+# Bluetooth
+$bluetooth = Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq "OK" }
 
 # ==========================
-# ERRORES
+# RESUMEN EJECUTIVO
 # ==========================
-Show-Section "ERRORES RECIENTES"
+Show-Section "RESUMEN EJECUTIVO"
 
-$errors = Get-EventLog System -EntryType Error -Newest 10
-$errors | Select TimeGenerated, Source
+Write-Host "🖥️ Sistema:"
+Write-Host "$($os.Caption) - Build $($os.BuildNumber)"
+Write-Host "$($computer.Manufacturer) $($computer.Model)"
 
-# ==========================
-# POSIBLE MALWARE
-# ==========================
-Show-Section "PROCESOS SOSPECHOSOS"
+Write-Host "`n👤 Usuarios:"
+$users | ForEach-Object { Write-Host "- $($_.LocalPath.Split('\')[-1])" }
 
-$suspicious = Get-Process | Where {
-    $_.Path -like "*AppData*" -or $_.Path -like "*Temp*"
-} | Select Name, Path
+Write-Host "`n🌐 Chrome:"
+if ($chromeProfiles) {
+    $chromeProfiles | ForEach-Object { Write-Host "- $($_.Name)" }
+} else { Write-Host "No detectado" }
 
-$suspicious
+Write-Host "`n🔵 Bluetooth:"
+if ($bluetooth) {
+    $bluetooth | ForEach-Object { Write-Host "- $($_.FriendlyName)" }
+} else { Write-Host "Sin dispositivos" }
 
-# ==========================
-# WINDOWS VERSION
-# ==========================
-Show-Section "WINDOWS"
-
-Write-Host "$($os.Caption)"
-Write-Host "Build: $($os.BuildNumber)"
+Write-Host "`n💾 Memoria:"
+Write-Host "$([math]::Round($memory / 1GB,2)) GB - Uso $([int]$usedRAMPercent)%"
 
 # ==========================
 # ANÁLISIS INTELIGENTE
 # ==========================
-Show-Section "ANÁLISIS"
+Show-Section "ANÁLISIS INTELIGENTE"
 
 $issues = @()
 $recommendations = @()
@@ -131,14 +96,14 @@ $recommendations = @()
 if ($usedRAMPercent -gt 80) {
     BAD "RAM alta"
     $issues += "RAM saturada"
-    $recommendations += "Ampliar RAM"
-}
+    $recommendations += "Ampliar RAM a 16GB o más"
+} else { OK "RAM estable" }
 
 if ($diskType -eq "HDD") {
     BAD "HDD detectado"
     $issues += "Disco HDD"
-    $recommendations += "Cambiar a SSD"
-}
+    $recommendations += "Migrar a SSD"
+} else { OK "SSD detectado" }
 
 if ($diskUsagePercent -gt 85) {
     WARN "Disco lleno"
@@ -149,17 +114,17 @@ if ($diskUsagePercent -gt 85) {
 if ($cpuLoad -gt 80) {
     WARN "CPU alta"
     $issues += "CPU alta"
-    $recommendations += "Revisar procesos"
+    $recommendations += "Optimizar procesos"
 }
 
 if ($os.Caption -match "Windows 10") {
-    WARN "Sistema en Windows 10"
-    $recommendations += "Actualizar a Windows 11"
+    WARN "Windows 10 detectado"
+    $recommendations += "Evaluar actualización a Windows 11"
 }
 
-if ($users.Count -gt 5) {
-    WARN "Muchos usuarios"
-    $issues += "Exceso de usuarios"
+if ($users.Count -gt 3) {
+    WARN "Múltiples usuarios"
+    $issues += "Muchos usuarios"
 }
 
 # SCORE
@@ -168,54 +133,98 @@ if ($usedRAMPercent -gt 80) { $score -= 20 }
 if ($diskUsagePercent -gt 85) { $score -= 20 }
 if ($cpuLoad -gt 80) { $score -= 20 }
 if ($diskType -eq "HDD") { $score -= 30 }
-
 if ($score -lt 0) { $score = 0 }
 
 Show-Section "RESULTADO"
-Write-Host "SCORE: $score / 100"
+Write-Host "📊 SCORE: $score / 100" -ForegroundColor Cyan
 
 # ==========================
-# HTML
+# HTML DISEÑO PRO
 # ==========================
 @"
+<!DOCTYPE html>
 <html>
-<body style='font-family:Arial'>
+<head>
+<meta charset="UTF-8">
+<title>KeyNetworks Diagnostic</title>
+<style>
+body { font-family: Arial; background:#f5f6fa; margin:20px; color:#2f3640;}
+.card { background:white; padding:20px; border-radius:10px; margin-bottom:20px; box-shadow:0 2px 10px rgba(0,0,0,0.05);}
+.header { background:#111; color:white; padding:20px; border-radius:10px; text-align:center;}
+h1,h2 { margin:0 0 10px 0;}
+ul { padding-left:20px;}
+.bad { color:#e84118;}
+.warn { color:#fbc531;}
+.ok { color:#44bd32;}
+</style>
+</head>
+<body>
+
+<div class="header">
 <h1>KeyNetworks Diagnostic</h1>
+<p>Reporte profesional del sistema</p>
+</div>
 
-<h2>Score: $score / 100</h2>
+<div class="card">
+<h2>📊 Score</h2>
+<h1>$score / 100</h1>
+</div>
 
-<h3>Problemas</h3>
-<ul>
-$($issues | ForEach-Object { "<li>$_</li>" })
-</ul>
-
-<h3>Recomendaciones</h3>
-<ul>
-$($recommendations | ForEach-Object { "<li>$_</li>" })
-</ul>
-
-<h3>Windows</h3>
+<div class="card">
+<h2>🖥️ Sistema</h2>
 <p>$($os.Caption) - Build $($os.BuildNumber)</p>
+<p>$($computer.Manufacturer) $($computer.Model)</p>
+</div>
 
-<h3>Usuarios</h3>
+<div class="card">
+<h2>👤 Usuarios</h2>
 <ul>
-$($users | ForEach-Object {
-    "<li>$($_.LocalPath)</li>"
-})
+$($users | ForEach-Object { "<li>$($_.LocalPath)</li>" })
 </ul>
+</div>
 
-<h3>Bluetooth</h3>
+<div class="card">
+<h2>🌐 Chrome</h2>
 <ul>
-$($bluetooth | ForEach-Object {
-    "<li>$($_.FriendlyName)</li>"
-})
+$($chromeProfiles | ForEach-Object { "<li>$($_.Name)</li>" })
 </ul>
+</div>
 
-<p>Contacto: soporte@keynetworks.mx</p>
+<div class="card">
+<h2>🔵 Bluetooth</h2>
+<ul>
+$($bluetooth | ForEach-Object { "<li>$($_.FriendlyName)</li>" })
+</ul>
+</div>
+
+<div class="card">
+<h2>💾 Memoria</h2>
+<p>$([math]::Round($memory / 1GB,2)) GB - Uso $([int]$usedRAMPercent)%</p>
+</div>
+
+<div class="card">
+<h2>🚨 Problemas</h2>
+<ul>
+$($issues | ForEach-Object { "<li class='bad'>$_</li>" })
+</ul>
+</div>
+
+<div class="card">
+<h2>💡 Recomendaciones</h2>
+<ul>
+$($recommendations | ForEach-Object { "<li class='warn'>$_</li>" })
+</ul>
+</div>
+
+<div class="card">
+<h2>🛠 Soporte</h2>
+<p>Optimización, upgrades y soporte empresarial</p>
+<p><strong>soporte@keynetworks.mx</strong></p>
+</div>
 
 </body>
 </html>
-"@ | Out-File $HTML_REPORT
+"@ | Out-File $HTML_REPORT -Encoding UTF8
 
-Write-Host "`nReporte generado: $HTML_REPORT" -ForegroundColor Green
+Write-Host "`n📄 Reporte generado: $HTML_REPORT" -ForegroundColor Green
 Invoke-Item $HTML_REPORT
