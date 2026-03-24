@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-KeyNetworks Diagnostic Tool (Mac Style + AI)
+KeyNetworks Diagnostic Tool - FULL (Auditoría + Inteligencia)
 
 .VERSION
-2.1
+3.0
 
 .AUTHOR
 Victor Keymolen - KeyNetworks
@@ -13,7 +13,7 @@ param (
     [string]$ReportPath = "$env:USERPROFILE\Desktop\WindowsDiagnostic"
 )
 
-$VERSION = "2.1"
+$VERSION = "3.0"
 $HTML_REPORT = "$ReportPath\report_$(Get-Date -Format 'yyyyMMdd_HHmmss').html"
 New-Item -ItemType Directory -Path $ReportPath -Force | Out-Null
 
@@ -30,8 +30,17 @@ function OK($msg) { Write-Host "✅ $msg" -ForegroundColor Green }
 function WARN($msg) { Write-Host "⚠️ $msg" -ForegroundColor Yellow }
 function BAD($msg) { Write-Host "❌ $msg" -ForegroundColor Red }
 
+function Format-Size {
+    param([int64]$bytes)
+    if ($bytes -ge 1TB) { "{0:N1} TB" -f ($bytes / 1TB) }
+    elseif ($bytes -ge 1GB) { "{0:N1} GB" -f ($bytes / 1GB) }
+    elseif ($bytes -ge 1MB) { "{0:N1} MB" -f ($bytes / 1MB) }
+    elseif ($bytes -ge 1KB) { "{0:N1} KB" -f ($bytes / 1KB) }
+    else { "$bytes B" }
+}
+
 # ==========================
-# DATOS
+# DATOS DEL SISTEMA
 # ==========================
 Show-Section "INICIANDO DIAGNÓSTICO KEYNETWORKS"
 
@@ -43,64 +52,114 @@ $cpu = Get-CimInstance Win32_Processor
 Show-Section "CPU"
 $cpuLoad = (Get-Counter '\Processor(_Total)\% Processor Time').CounterSamples.CookedValue
 Write-Host "Modelo: $($cpu.Name)"
-Write-Host "Uso actual: $([int]$cpuLoad)%"
+Write-Host "Uso: $([int]$cpuLoad)%"
 
 # RAM
-Show-Section "MEMORIA RAM"
-$memory = Get-CimInstance Win32_PhysicalMemory | Measure-Object Capacity -Sum | Select-Object -ExpandProperty Sum
-$freeMemory = (Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory * 1KB
+Show-Section "MEMORIA"
+$memory = Get-CimInstance Win32_PhysicalMemory | Measure-Object Capacity -Sum | Select -Expand Sum
+$freeMemory = $os.FreePhysicalMemory * 1KB
 $usedRAMPercent = (($memory - $freeMemory) / $memory) * 100
 
 Write-Host "Total: $([math]::Round($memory / 1GB,2)) GB"
 Write-Host "Uso: $([int]$usedRAMPercent)%"
 
 # DISCO
-Show-Section "ALMACENAMIENTO"
+Show-Section "DISCO"
 $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
 $diskUsagePercent = (($disk.Size - $disk.FreeSpace) / $disk.Size) * 100
-$diskType = (Get-PhysicalDisk | Select-Object -First 1).MediaType
+$diskType = (Get-PhysicalDisk | Select -First 1).MediaType
 
 Write-Host "Tipo: $diskType"
 Write-Host "Uso: $([int]$diskUsagePercent)%"
 
-# PROCESOS
-Show-Section "PROCESOS PESADOS"
-Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 Name, CPU
+# ==========================
+# USUARIOS
+# ==========================
+Show-Section "USUARIOS"
+
+$users = Get-CimInstance Win32_UserProfile | Where { $_.Special -eq $false }
+
+foreach ($u in $users) {
+    $name = $u.LocalPath.Split("\")[-1]
+    $last = if ($u.LastUseTime) { ([datetime]$u.LastUseTime).ToString("yyyy-MM-dd") } else { "N/A" }
+    Write-Host "$name - Último uso: $last"
+}
+
+# ==========================
+# BLUETOOTH
+# ==========================
+Show-Section "BLUETOOTH"
+
+$bluetooth = Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue | Where Status -eq "OK"
+$bluetooth | Select FriendlyName, Status
+
+# ==========================
+# ERRORES
+# ==========================
+Show-Section "ERRORES RECIENTES"
+
+$errors = Get-EventLog System -EntryType Error -Newest 10
+$errors | Select TimeGenerated, Source
+
+# ==========================
+# POSIBLE MALWARE
+# ==========================
+Show-Section "PROCESOS SOSPECHOSOS"
+
+$suspicious = Get-Process | Where {
+    $_.Path -like "*AppData*" -or $_.Path -like "*Temp*"
+} | Select Name, Path
+
+$suspicious
+
+# ==========================
+# WINDOWS VERSION
+# ==========================
+Show-Section "WINDOWS"
+
+Write-Host "$($os.Caption)"
+Write-Host "Build: $($os.BuildNumber)"
 
 # ==========================
 # ANÁLISIS INTELIGENTE
 # ==========================
-Show-Section "ANÁLISIS INTELIGENTE"
+Show-Section "ANÁLISIS"
 
 $issues = @()
 $recommendations = @()
 
 if ($usedRAMPercent -gt 80) {
-    BAD "RAM saturada ($([int]$usedRAMPercent)%)"
-    $issues += "RAM alta"
-    $recommendations += "Ampliar a 16GB o más"
-} else {
-    OK "RAM en buen estado"
+    BAD "RAM alta"
+    $issues += "RAM saturada"
+    $recommendations += "Ampliar RAM"
 }
 
 if ($diskType -eq "HDD") {
-    BAD "Disco HDD detectado"
+    BAD "HDD detectado"
     $issues += "Disco HDD"
-    $recommendations += "Cambiar a SSD (CRÍTICO)"
-} else {
-    OK "Disco SSD detectado"
+    $recommendations += "Cambiar a SSD"
 }
 
 if ($diskUsagePercent -gt 85) {
-    WARN "Disco casi lleno"
+    WARN "Disco lleno"
     $issues += "Disco lleno"
     $recommendations += "Liberar espacio"
 }
 
 if ($cpuLoad -gt 80) {
-    WARN "CPU alta ($([int]$cpuLoad)%)"
+    WARN "CPU alta"
     $issues += "CPU alta"
     $recommendations += "Revisar procesos"
+}
+
+if ($os.Caption -match "Windows 10") {
+    WARN "Sistema en Windows 10"
+    $recommendations += "Actualizar a Windows 11"
+}
+
+if ($users.Count -gt 5) {
+    WARN "Muchos usuarios"
+    $issues += "Exceso de usuarios"
 }
 
 # SCORE
@@ -112,31 +171,44 @@ if ($diskType -eq "HDD") { $score -= 30 }
 
 if ($score -lt 0) { $score = 0 }
 
-Show-Section "RESULTADO FINAL"
-
-Write-Host "📊 SCORE: $score / 100" -ForegroundColor Cyan
-
-if ($score -gt 80) { OK "Equipo en buen estado" }
-elseif ($score -gt 60) { WARN "Equipo mejorable" }
-else { BAD "Equipo requiere optimización" }
+Show-Section "RESULTADO"
+Write-Host "SCORE: $score / 100"
 
 # ==========================
-# HTML REPORT
+# HTML
 # ==========================
 @"
 <html>
 <body style='font-family:Arial'>
 <h1>KeyNetworks Diagnostic</h1>
+
 <h2>Score: $score / 100</h2>
 
-<h3>Problemas:</h3>
+<h3>Problemas</h3>
 <ul>
 $($issues | ForEach-Object { "<li>$_</li>" })
 </ul>
 
-<h3>Recomendaciones:</h3>
+<h3>Recomendaciones</h3>
 <ul>
 $($recommendations | ForEach-Object { "<li>$_</li>" })
+</ul>
+
+<h3>Windows</h3>
+<p>$($os.Caption) - Build $($os.BuildNumber)</p>
+
+<h3>Usuarios</h3>
+<ul>
+$($users | ForEach-Object {
+    "<li>$($_.LocalPath)</li>"
+})
+</ul>
+
+<h3>Bluetooth</h3>
+<ul>
+$($bluetooth | ForEach-Object {
+    "<li>$($_.FriendlyName)</li>"
+})
 </ul>
 
 <p>Contacto: soporte@keynetworks.mx</p>
@@ -145,5 +217,5 @@ $($recommendations | ForEach-Object { "<li>$_</li>" })
 </html>
 "@ | Out-File $HTML_REPORT
 
-Write-Host "`n📄 Reporte generado: $HTML_REPORT" -ForegroundColor Green
+Write-Host "`nReporte generado: $HTML_REPORT" -ForegroundColor Green
 Invoke-Item $HTML_REPORT
