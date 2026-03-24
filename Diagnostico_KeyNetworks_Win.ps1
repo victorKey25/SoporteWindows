@@ -13,6 +13,17 @@ $computer = Get-CimInstance Win32_ComputerSystem
 $cpu = Get-CimInstance Win32_Processor
 $uptime = (Get-Date) - $os.LastBootUpTime
 $arch = $os.OSArchitecture
+$fecha = Get-Date -Format "dd/MM/yyyy HH:mm"
+
+# ==========================
+# VERSION WINDOWS
+# ==========================
+$build = [int]$os.BuildNumber
+if ($build -lt 19045) {
+    $winStatus = "⚠ Windows desactualizado (recomendado actualizar)"
+} else {
+    $winStatus = "✔ Windows actualizado"
+}
 
 # ==========================
 # RAM
@@ -58,7 +69,7 @@ $chromeProfilesData = @()
 $chromePath = "$env:LOCALAPPDATA\Google\Chrome\User Data"
 
 if (Test-Path $chromePath) {
-    Get-ChildItem $chromePath -Directory | Where { $_.Name -match "Profile|Default" } | ForEach-Object {
+    Get-ChildItem $chromePath -Directory | Where-Object { $_.Name -match "Profile|Default" } | ForEach-Object {
         try {
             $json = Get-Content "$($_.FullName)\Preferences" -Raw | ConvertFrom-Json
             $name = $json.profile.name
@@ -74,33 +85,34 @@ if (Test-Path $chromePath) {
 # BLUETOOTH
 # ==========================
 $btDevices = Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue |
-Where FriendlyName | Select -Expand FriendlyName
+Where-Object { $_.FriendlyName } |
+Select-Object -ExpandProperty FriendlyName
 
 # ==========================
 # ARCHIVOS PESADOS
 # ==========================
 $heavyFiles = Get-ChildItem $env:USERPROFILE -Recurse -File -ErrorAction SilentlyContinue |
-Sort Length -Descending | Select -First 10 FullName,@{n="MB";e={[math]::Round($_.Length/1MB,2)}}
+Sort-Object Length -Descending | Select-Object -First 10 FullName,@{n="MB";e={[math]::Round($_.Length/1MB,2)}}
 
 # ==========================
 # APPS
 # ==========================
 $apps = Get-ItemProperty HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\* |
-Where DisplayName | Select -First 20 DisplayName
+Where-Object { $_.DisplayName } | Select-Object -First 20 DisplayName
 
 # ==========================
 # SOSPECHOSOS
 # ==========================
-$suspicious = Get-Process | Where { $_.Path -like "*AppData*" -or $_.Path -like "*Temp*" }
+$suspicious = Get-Process | Where-Object { $_.Path -like "*AppData*" -or $_.Path -like "*Temp*" }
 
-if ($suspicious) {
-    $suspiciousList = ($suspicious | % { "<li>$($_.Name)</li>" }) -join ""
+if ($suspicious -and $suspicious.Count -gt 0) {
+    $suspiciousList = ($suspicious | ForEach-Object { "<li>$($_.Name)</li>" }) -join ""
 } else {
     $suspiciousList = "<li>✅ No se encontraron amenazas evidentes</li>"
 }
 
 # ==========================
-# ANÁLISIS
+# ANALISIS
 # ==========================
 $issues = @()
 $recommendations = @()
@@ -141,21 +153,24 @@ if ($usedRAMPercent -gt 80) { $score -= 20 }
 if ($diskUsagePercent -gt 85) { $score -= 20 }
 if ($cpuLoad -gt 80) { $score -= 20 }
 if ($diskPhysical.MediaType -eq "HDD") { $score -= 30 }
+if ($score -lt 0) { $score = 0 }
 
+# COLOR SCORE
 if ($score -ge 80) { $scoreColor="#44bd32"; $final="Equipo en buen estado" }
 elseif ($score -ge 50) { $scoreColor="#fbc531"; $final="Equipo con áreas de mejora" }
 else { $scoreColor="#e84118"; $final="Equipo requiere optimización urgente" }
 
 # ==========================
-# HTML PRO
+# HTML FINAL
 # ==========================
 @"
 <html>
 <body style='font-family:Arial;background:#f5f6fa;padding:20px;'>
 
-<div style="background:linear-gradient(135deg,#1e272e,#2f3640);color:white;padding:25px;border-radius:12px;">
-<h1>KeyNetworks</h1>
+<div style="background:linear-gradient(135deg,#1e272e,#2f3640);color:white;padding:25px;border-radius:12px;text-align:center;">
+<h1 style="margin:0;">KeyNetworks</h1>
 <p>Reporte de diagnóstico del sistema</p>
+<p style="opacity:0.8;">Generado: $fecha</p>
 </div>
 
 <div style='background:white;padding:30px;border-radius:12px;margin-top:20px;text-align:center;'>
@@ -164,12 +179,15 @@ else { $scoreColor="#e84118"; $final="Equipo requiere optimización urgente" }
 </div>
 
 <h2>🖥️ Sistema</h2>
-<p>$($os.Caption) | $arch</p>
-<p>CPU: $($cpu.Name)</p>
-<p>Uptime: $($uptime.Days)d $($uptime.Hours)h</p>
+<p><strong>Sistema:</strong> $($os.Caption)</p>
+<p><strong>Arquitectura:</strong> $arch</p>
+<p><strong>Estado:</strong> $winStatus</p>
+<p><strong>CPU:</strong> $($cpu.Name)</p>
+<p><strong>Uptime:</strong> $($uptime.Days)d $($uptime.Hours)h</p>
 
 <h2>💾 Memoria</h2>
 <p>Total: $([math]::Round($totalRAM/1GB))GB</p>
+<ul>$($ramModules | ForEach-Object { "<li>$([math]::Round($_.Capacity/1GB,2))GB - $($_.Speed)MHz</li>" })</ul>
 
 <h2>🗄️ Disco</h2>
 <p>$($diskPhysical.MediaType) - $([int]$diskUsagePercent)% uso</p>
@@ -182,28 +200,31 @@ else { $scoreColor="#e84118"; $final="Equipo requiere optimización urgente" }
 <p>WiFi: $wifi</p>
 
 <h2>🌐 Chrome</h2>
-<ul>$($chromeProfilesData | % { "<li>$_</li>" })</ul>
+<ul>$($chromeProfilesData | ForEach-Object { "<li>$_</li>" })</ul>
 
 <h2>🔵 Bluetooth</h2>
-<ul>$($btDevices | % { "<li>$_</li>" })</ul>
+<ul>$($btDevices | ForEach-Object { "<li>$_</li>" })</ul>
 
 <h2>📂 Archivos pesados</h2>
-<ul>$($heavyFiles | % { "<li>$($_.FullName) - $($_.MB) MB</li>" })</ul>
+<ul>$($heavyFiles | ForEach-Object { "<li>$($_.FullName) - $($_.MB) MB</li>" })</ul>
 
 <h2>📊 Procesos</h2>
-<ul>$($topProcesses | % { "<li>$($_.Name) - $($_.MB) MB</li>" })</ul>
+<ul>$($topProcesses | ForEach-Object { "<li>$($_.Name) - $($_.MB) MB</li>" })</ul>
 
 <h2>📦 Aplicaciones</h2>
-<ul>$($apps | % { "<li>$($_.DisplayName)</li>" })</ul>
+<ul>$($apps | ForEach-Object { "<li>$($_.DisplayName)</li>" })</ul>
 
 <h2>🛡️ Seguridad</h2>
 <ul>$suspiciousList</ul>
 
+<h2>🧩 Extensiones Kernel</h2>
+<p>No aplica en Windows</p>
+
 <h2>🚨 Problemas</h2>
-<ul>$($issues | % { "<li>$_</li>" })</ul>
+<ul>$($issues | ForEach-Object { "<li>$_</li>" })</ul>
 
 <h2>💡 Recomendaciones</h2>
-<ul>$($recommendations | % { "<li>$_</li>" })</ul>
+<ul>$($recommendations | ForEach-Object { "<li>$_</li>" })</ul>
 
 <h2>📩 Contacto</h2>
 <p>contacto@keynetworks.com.mx</p>
