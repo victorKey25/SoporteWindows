@@ -13,7 +13,7 @@ $computer = Get-CimInstance Win32_ComputerSystem
 $cpu = Get-CimInstance Win32_Processor
 $uptime = (Get-Date) - $os.LastBootUpTime
 $arch = $os.OSArchitecture
-$fecha = Get-Date -Format "dd/MM/yyyy HH:mm"
+$fecha = Get-Date
 
 # ==========================
 # VERSION WINDOWS
@@ -155,79 +155,104 @@ if ($cpuLoad -gt 80) { $score -= 20 }
 if ($diskPhysical.MediaType -eq "HDD") { $score -= 30 }
 if ($score -lt 0) { $score = 0 }
 
-# COLOR SCORE
-if ($score -ge 80) { $scoreColor="#44bd32"; $final="Equipo en buen estado" }
-elseif ($score -ge 50) { $scoreColor="#fbc531"; $final="Equipo con áreas de mejora" }
-else { $scoreColor="#e84118"; $final="Equipo requiere optimización urgente" }
+if ($score -ge 80) { $scoreColor="#2ecc71"; $final="Equipo en excelente estado" }
+elseif ($score -ge 50) { $scoreColor="#f1c40f"; $final="Equipo funcional con mejoras recomendadas" }
+else { $scoreColor="#e74c3c"; $final="Equipo requiere optimización urgente" }
 
 # ==========================
-# HTML FINAL
+# HTML
 # ==========================
 @"
 <html>
-<body style='font-family:Arial;background:#f5f6fa;padding:20px;'>
+<head>
+<style>
+body { font-family: Arial; background:#f5f6fa; margin:0; padding:20px; }
+.card { background:white; padding:20px; border-radius:12px; margin-top:20px; box-shadow:0 4px 10px rgba(0,0,0,0.05);}
+h2 { border-bottom:1px solid #eee; padding-bottom:5px; }
+ul { padding-left:20px; }
+</style>
+</head>
 
-<div style="background:linear-gradient(135deg,#1e272e,#2f3640);color:white;padding:25px;border-radius:12px;text-align:center;">
-<h1 style="margin:0;">KeyNetworks</h1>
-<p>Reporte de diagnóstico del sistema</p>
-<p style="opacity:0.8;">Generado: $fecha</p>
+<body>
+
+<div style="background:linear-gradient(135deg,#1e272e,#2f3640);color:white;padding:30px;border-radius:12px;text-align:center;">
+<h1 style="margin:0;font-size:34px;letter-spacing:2px;text-transform:uppercase;">KeyNetworks</h1>
+<p>Diagnóstico Técnico Completo</p>
+<p style="opacity:0.8;">Generado: $fecha | Versión: 1.3.2</p>
+<hr style="border:0;border-top:1px solid #555;">
+<p>📞 55 7434 7924 | 📩 contacto@keynetworks.com.mx | 🌐 keynetworks.com.mx</p>
 </div>
 
-<div style='background:white;padding:30px;border-radius:12px;margin-top:20px;text-align:center;'>
-<h1 style="color:$scoreColor;">$score / 100</h1>
+<div class="card" style="text-align:center;">
+<h1 style="color:$scoreColor;font-size:40px;">$score / 100</h1>
 <p>$final</p>
 </div>
 
+<div class="card">
 <h2>🖥️ Sistema</h2>
-<p><strong>Sistema:</strong> $($os.Caption)</p>
-<p><strong>Arquitectura:</strong> $arch</p>
-<p><strong>Estado:</strong> $winStatus</p>
-<p><strong>CPU:</strong> $($cpu.Name)</p>
-<p><strong>Uptime:</strong> $($uptime.Days)d $($uptime.Hours)h</p>
+<p><strong>$($os.Caption)</strong></p>
+<p>Arquitectura: $arch</p>
+<p>Estado: $winStatus</p>
+<p>CPU: $($cpu.Name)</p>
+<p>Uptime: $($uptime.Days)d $($uptime.Hours)h</p>
+</div>
 
+<div class="card">
 <h2>💾 Memoria</h2>
 <p>Total: $([math]::Round($totalRAM/1GB))GB</p>
-<ul>$($ramModules | ForEach-Object { "<li>$([math]::Round($_.Capacity/1GB,2))GB - $($_.Speed)MHz</li>" })</ul>
+<ul>$($ramModules | % { "<li>$([math]::Round($_.Capacity/1GB,2))GB - $($_.Speed)MHz</li>" })</ul>
+</div>
 
+<div class="card">
 <h2>🗄️ Disco</h2>
 <p>$($diskPhysical.MediaType) - $([int]$diskUsagePercent)% uso</p>
+</div>
 
-<h2>🔋 Batería</h2>
-<p>$batteryPercent</p>
-
+<div class="card">
 <h2>🌐 Red</h2>
 <p>IP: $ip</p>
 <p>WiFi: $wifi</p>
+</div>
 
+<div class="card">
 <h2>🌐 Chrome</h2>
-<ul>$($chromeProfilesData | ForEach-Object { "<li>$_</li>" })</ul>
+<ul>$($chromeProfilesData | % { "<li>$_</li>" })</ul>
+</div>
 
+<div class="card">
 <h2>🔵 Bluetooth</h2>
-<ul>$($btDevices | ForEach-Object { "<li>$_</li>" })</ul>
+<ul>$($btDevices | % { "<li>$_</li>" })</ul>
+</div>
 
+<div class="card">
 <h2>📂 Archivos pesados</h2>
-<ul>$($heavyFiles | ForEach-Object { "<li>$($_.FullName) - $($_.MB) MB</li>" })</ul>
+<ul>$($heavyFiles | % { "<li>$($_.FullName) - $($_.MB) MB</li>" })</ul>
+</div>
 
+<div class="card">
 <h2>📊 Procesos</h2>
-<ul>$($topProcesses | ForEach-Object { "<li>$($_.Name) - $($_.MB) MB</li>" })</ul>
+<ul>$($topProcesses | % { "<li>$($_.Name) - $($_.MB) MB</li>" })</ul>
+</div>
 
+<div class="card">
 <h2>📦 Aplicaciones</h2>
-<ul>$($apps | ForEach-Object { "<li>$($_.DisplayName)</li>" })</ul>
+<ul>$($apps | % { "<li>$($_.DisplayName)</li>" })</ul>
+</div>
 
+<div class="card">
 <h2>🛡️ Seguridad</h2>
 <ul>$suspiciousList</ul>
+</div>
 
-<h2>🧩 Extensiones Kernel</h2>
-<p>No aplica en Windows</p>
-
+<div class="card">
 <h2>🚨 Problemas</h2>
-<ul>$($issues | ForEach-Object { "<li>$_</li>" })</ul>
+<ul>$($issues | % { "<li>$_</li>" })</ul>
+</div>
 
+<div class="card">
 <h2>💡 Recomendaciones</h2>
-<ul>$($recommendations | ForEach-Object { "<li>$_</li>" })</ul>
-
-<h2>📩 Contacto</h2>
-<p>contacto@keynetworks.com.mx</p>
+<ul>$($recommendations | % { "<li>$_</li>" })</ul>
+</div>
 
 </body>
 </html>
